@@ -9,6 +9,9 @@
 ### 8/29
 이제 ReactorKit을 다뤄볼려한다. RxSwift를 써서 비동기 프로그래밍을 하는건 익숙한데, ReactorKit을 쓰지않은 형태로 해서 그런지, 작성했던 코드들이 좀 더럽다 라는 느낌을 받아 ReactorKit을 공부해보면 어떨까 싶어서 한번 도전해본다. 오늘은 일단 간단하게만....
 
+### 8/31
+Global State.... 전역상태에 대해서 조금 더 파고들어봐야할거같다.... 생각해보니 전역상태라는걸 깊게 생각해보지 않은거같은데... 전역변수랑은 다른걸까...
+
 # What is ReactorKit?
 
 ## 기본 개념
@@ -47,4 +50,111 @@ profileViewController.reactor = UserViewReactor() // inject reactor
 말 그대로, 데이터를 화면에 보여주는 역할을 수행하고 View 에서 발생된 이벤트들을 액션 스트림에 bind하고 UI 컴포넌트에 state를 적용시킨다.
 
 VC나 Cell에 View라는 프로토콜을 적용시키면 자동으로 typealias 키워드를 가진형태로 Reactor를 바인딩하도록 나온다. 
+
+reactor가 할당되면 자동으로 .bind(reactor:) 함수가 호출된다. .bind(reactor:) 함수는 action 스트림과 state 스트림을 묶어주는 역할을 수행한다.
+```swift
+func bind(reactor: ProfileViewReactor) {
+  // action (View -> Reactor)
+  refreshButton.rx.tap.map { Reactor.Action.refresh }
+    .bind(to: reactor.action)
+    .disposed(by: self.disposeBag)
+
+  // state (Reactor -> View)
+  reactor.state.map { $0.isFollowing }
+    .bind(to: followButton.rx.isSelected)
+    .disposed(by: self.disposeBag)
+}
+```
+
+## 스토리보드 지원
+
+스토리보드를 사용하는 VC에 StoryboardView 프로토콜을 사용해야한다 View 프로토콜과의 차이점은 딱 하나인데, 바로 viewDidLoad()가 모두 진행 된 이후에 .bind(reactor:) 함수가 호출된다는 점이다.
+
+## Reactor
+
+Reactor는 UI와 독립된 계층으로, view의 statea를 관리하는 역할을 수행한다. reactor의 가장 큰 역할은 view에서 나오는 제어 흐름(control flow)를 분리하는 역할이다. 모든 view는 각각 상응하는 redactor가 있으며, 모든 비즈니스 로직을 reactor에 deleagte 시킨다. readctor은 view와의 dependency가 없기때문에 테스트환경이 더 쉽게 구축된다.
+
+reactor는 Reactor 프로토콜을 적용하는것으로 시작하고, Action, Mutation, State, initialState를 정의해야 사용가능하다. Action, Mutation은 enum으로, State는 struct 형태로 선언이 가능하다.
+
+```swift
+class ProfileViewReactor: Reactor {
+  // represent user actions
+  enum Action {
+    case refreshFollowingStatus(Int)
+    case follow(Int)
+  }
+
+  // represent state changes
+  enum Mutation {
+    case setFollowing(Bool)
+  }
+
+  // represents the current view state
+  struct State {
+    var isFollowing: Bool = false
+  }
+
+  let initialState: State = State()
+}
+```
+
+![image](https://user-images.githubusercontent.com/48994081/187618297-f34d1371-b020-41a5-847e-a47a197d2e3f.png)
+
+
+위 그림에서 각각의 의미은,
+- Action : 사용자의 상호작용을 의미한다.
+- State : 뷰의 state를 의미한다.
+- Mutation : Action과 State의 연결고리를 의미한다.
+
+reactor는 action 스트림을 mutate()와 reduce() 두 단계로 action 스트림에서 state 스트림으로 바꾼다.
+
+### mutate()
+
+Action을 수신받아 `Observable<Mutaion>` 형태로 생성한다.
+
+```swift
+func mutate(action: Action) -> Observable<Mutation>
+```
+
+```swift
+func mutate(action: Action) -> Observable<Mutation> {
+  switch action {
+  case let .refreshFollowingStatus(userID): // action을 전달받음
+    return UserAPI.isFollowing(userID) // API 스트림을 생성함
+      .map { (isFollowing: Bool) -> Mutation in
+        return Mutation.setFollowing(isFollowing) // Mutaion 스트림으로 변환함
+      }
+  case let .follow(userID):
+    return UserAPI.follow()
+      .map { _ -> Mutation in
+        return Mutation.setFollowing(true)
+      }
+  }
+}
+```
+
+### reduce()
+이전의 State와 Mutaion으로부터 새로운 State를 생성한다.
+
+```swift
+func reduce(state: State, mutation: Mutation) -> State
+```
+```swift
+func reduce(state: State, mutation: Mutation) -> State {
+  var state = state // 이전 state를 그대로 가져옴
+  switch mutation {
+  case let .setFollowing(isFollowing):
+    state.isFollowing = isFollowing // 새로운 state를 생성하고 이전 state를 그대로 붙여놓음
+    return state // 새로운 state를 반환함
+  }
+}
+```
+
+위 예제 코드에서 봤듯이, reduce()는 순수한 함수의 역할만 한다. API호출과 같은 side effect는 호출되어서는 안된다.
+
+### Global State and transform()
+지금까지 배운 내용에 따르면, 스트림을 제어하는 절차는 Action -> Mutation -> State 절차로 흘러가는것으로 알고있을것이다.
+하지만, 이 절차(flow)는 Global State가 아니다.
+
+### ❓Global State 는 무엇인가요?
 
