@@ -1,7 +1,7 @@
 ##### <i>??? : RxSwift 쓰는데 왜 ReactorKit은 안썼음? Me : 그러게요...</i>
 
 
-# 그래서 정리합니다! ReactorKit!
+# 🥳그래서 정리합니다! ReactorKit!🥳
 
 이 저장소는 [ReactorKit](https://github.com/ReactorKit/ReactorKit)을 공부하면서 정리하는 저장소입니다! 정리하는 모든 내용은 [공식 GitHub README](https://github.com/ReactorKit/ReactorKit)를 참고하여 정리하였습니다.
 #### ❗️정리하는 모든 내용은 비동기 프로그래밍, MVVM, RxSwift, RxCocoa에 대한 기본 지식이 있다는것을 전제를 두고 정리된 내용입니다!
@@ -11,6 +11,9 @@
 
 ### 8/31
 Global State.... 전역상태에 대해서 조금 더 파고들어봐야할거같다.... 생각해보니 전역상태라는걸 깊게 생각해보지 않은거같은데... 전역변수랑은 다른걸까...
+
+### 9/1
+전역상태에 대해서 많이 찾아봤다. Redux에서 나온 개념이라 생소했으나, 결국 말 그대로 전역에서 쓰이는 이벤트 스트림을 말하는거였구나... 이제 리드미는 정리 끝!
 
 # What is ReactorKit?
 
@@ -152,9 +155,193 @@ func reduce(state: State, mutation: Mutation) -> State {
 
 위 예제 코드에서 봤듯이, reduce()는 순수한 함수의 역할만 한다. API호출과 같은 side effect는 호출되어서는 안된다.
 
-### Global State and transform()
+## Global State and transform()
 지금까지 배운 내용에 따르면, 스트림을 제어하는 절차는 Action -> Mutation -> State 절차로 흘러가는것으로 알고있을것이다.
 하지만, 이 절차(flow)는 Global State가 아니다.
 
-### ❓Global State 는 무엇인가요?
+#### ❓Global State 는 무엇인가요?
+전역 상태(Global State)라는 말의 의미는, 모든곳(여러곳)에서 영향을 주는 컴포넌트(이벤트 스트림)이라는 뜻이며 1:N의 연결을 가진 스트림을 말한다.
+
+그렇다면, 이미 진행했던 프로젝트에서 전역 이벤트 스트림으로 구성해놨던 작업은 전부 리팩토링해야하는가? 
+### 아니다!
+바로 .transform() 함수를 통해서 전역 이벤트 스트림을 합치는 방식이나 다른 방식으로 전역 이벤트 스트림을 action, mutation, state 로 변환할 수 있다.
+
+.transform() 함수는 파라미터로 action, mutation, state타입을 가진 옵저버블을 같은 형태로 반환하는 함수이다. 함수의 기능은 다른 옵저버블 스트림을 파라미터로 전달받은 옵저버블과 합친 후 변환하는 기능을 가지고있다.
+
+
+```swift
+var currentUser: BehaviorSubject<User> // global state
+
+func transform(mutation: Observable<Mutation>) -> Observable<Mutation> {
+  return Observable.merge(mutation, currentUser.map(Mutation.setUser))
+}
+```
+
+## View 간의 커뮤니케이션
+
+![image](https://user-images.githubusercontent.com/48994081/187837547-2064f9ce-7e8c-4686-8310-a25fe5af9c7e.png)
+
+본문 맨 처음에 얘기했던 내용처럼, ReactorKit은 RxSwfit(Reactive Programming)에 적합한 프레임워크이다. 뷰 간의 커뮤니케이션은 뷰를 UIButton, UILabel 처럼 다뤄줘야하는데, 이 방식의 대표로는 ControlEvent, UIButton.rx.tap 이 있다.
+
+## 테스트
+ReactorKit은 내장된 테스트 기능을 사용하여 더 쉽고 빠르게 테스트가 가능하다.
+
+#### 무엇을 테스트 할것인가?
+일단, View 혹은 Reactor 중 어떤것을 테스트 할 지 결정해야한다.
+- View : 사용자의 상호작용으로인한 적합한 Action이 Reactor이 전달되는가 / View가 State에 변화에 따라 적합하게 설정되어 있는가
+- Reactor : Action과 적합하게 State가 변경되었는가
+
+### View 테스트
+
+Reactor의 stub 기능을 활용하면 View를 테스트할 수 있다. Reactor.isStubEnabled 을 활성화하면 Reactor가 받은 Action을 모두 기록하고, mutate(), reduce() 함수대신 테스트환경에 맞게 외부에서 상태를 설정할 수 있다.
+
+stub은 아래 3개의 프로퍼티를 가진다.
+
+```swift
+var state: StateRelay<Reactor.State> { get }
+var action: ActionSubject<Reactor.Action> { get }
+var actions: [Reactor.Action] { get } // recorded actions
+```
+
+테스트 하는 예제 코드는 아래와 같다.
+
+```swift
+func testAction_refresh() {
+  // 1. Stub 리액터를 준비
+  let reactor = MyReactor()
+  reactor.isStubEnabled = true
+
+  // 2. Stub 리액터를 주입한 뷰를 준비
+  let view = MyView()
+  view.reactor = reactor
+
+  // 3. 사용자 상호작용을 실행
+  view.refreshControl.sendActions(for: .valueChanged)
+
+  // 4. 액션이 올바르게 전달되었는지 검증
+  XCTAssertEqual(reactor.stub.actions.last, .refresh)
+}
+
+func testState_isLoading() {
+  // 1. Stub 리액터를 준비
+  let reactor = MyReactor()
+  reactor.isStubEnabled = true
+
+  // 2. Stub 리액터를 주입한 뷰를 준비
+  let view = MyView()
+  view.reactor = reactor
+
+  // 3. 리액터의 상태를 설정
+  reactor.stub.state.value = MyReactor.State(isLoading: true)
+
+  // 4. 뷰 컴포넌트가 올바르게 변경되었는지 검증
+  XCTAssertEqual(view.activityIndicator.isAnimating, true)
+}
+```
+
+### Reactor 테스트
+Reactor은 아래 예시 코드와 같이 독립적으로 테스트가 가능하다.
+
+```swift
+func testIsBookmarked() {
+  let reactor = MyReactor()
+  reactor.action.onNext(.toggleBookmarked)
+  XCTAssertEqual(reactor.currentState.isBookmarked, true)
+  reactor.action.onNext(.toggleBookmarked)
+  XCTAssertEqual(reactor.currentState.isBookmarked, false)
+}
+```
+하지만, 몇몇 State는 한번의 Action으로 여러번 바뀌는 경우가있다. 이럴때는 [RxTest](https://github.com/ReactiveX/RxSwift) 혹은 [RxExpect](https://github.com/devxoul/RxExpect)를 사용하는것이 바람직하다.
+
+아래는 RxTest를 사용하여 테스트한 예시 코드이다.
+
+```swift
+func testIsLoading() {
+  // given
+  let scheduler = TestScheduler(initialClock: 0)
+  let reactor = MyReactor()
+  let disposeBag = DisposeBag()
+
+  // when
+  scheduler
+    .createHotObservable([
+      .next(100, .refresh) // send .refresh at 100 scheduler time
+    ])
+    .subscribe(reactor.action)
+    .disposed(by: disposeBag)
+
+  // then
+  let response = scheduler.start(created: 0, subscribed: 0, disposed: 1000) {
+    reactor.state.map(\.isLoading)
+  }
+  XCTAssertEqual(response.events.map(\.value.element), [
+    false, // initial state
+    true,  // just after .refresh
+    false  // after refreshing
+  ])
+}
+```
+
+## 스케쥴링
+scheduler 프로퍼티를 사용하여 특정 스케쥴러에서 state 스트림을 관측할 수 있다. 반드시 <b>serial queue<b>이어야 하며, 기본값으로는 MainSchedueler가 설정되어있다.
+
+```swift
+final class MyReactor: Reactor {
+  let scheduler: Scheduler = SerialDispatchQueueScheduler(qos: .default)
+
+  func reduce(state: State, mutation: Mutation) -> State {
+    // executed in a background thread
+    heavyAndImportantCalculation()
+    return state
+  }
+}
+```
+
+## 펄스
+펄스는 새로운 값이 할당되었을때(이전과 같은 값을 가져도)만 이벤트를 받고싶을때 사용한다.
+
+```swift
+// Reactor
+private final class MyReactor: Reactor {
+  struct State {
+    @Pulse var alertMessage: String?
+  }
+
+  func mutate(action: Action) -> Observable<Mutation> {
+    switch action {
+    case let .alert(message):
+      return Observable.just(Mutation.setAlertMessage(message))
+    }
+  }
+
+  func reduce(state: State, mutation: Mutation) -> State {
+    var newState = state
+
+    switch mutation {
+    case let .setAlertMessage(alertMessage):
+      newState.alertMessage = alertMessage
+    }
+
+    return newState
+  }
+}
+
+// View
+reactor.pulse(\.$alertMessage)
+  .compactMap { $0 } // filter nil
+  .subscribe(onNext: { [weak self] (message: String) in
+    self?.showAlert(message)
+  })
+  .disposed(by: disposeBag)
+
+// Cases
+reactor.action.onNext(.alert("Hello"))  // showAlert() is called with `Hello`
+reactor.action.onNext(.alert("Hello"))  // showAlert() is called with `Hello`
+reactor.action.onNext(.doSomeAction)    // showAlert() is not called
+reactor.action.onNext(.alert("Hello"))  // showAlert() is called with `Hello`
+reactor.action.onNext(.alert("tokijh")) // showAlert() is called with `tokijh`
+reactor.action.onNext(.doSomeAction)    // showAlert() is not called
+```
+
+위 에시 코드를 보면, 펄스를 사용하여 Hello 라는 값을 두번 전달하여도 정상적으로 수신되며, 값을 할당하지 않는 .doSomeAction 에는 showALert() 함수가 호출되지 않는것을 볼 수 있다.
 
